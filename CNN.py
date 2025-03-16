@@ -105,7 +105,8 @@ print(f'Acurácia no teste: {test_acc * 100:.2f}%, Loss no teste: {test_loss:.4f
 # Aplicar PCA para visualizar os embeddings
 embeddings = model.predict([test_img1, test_img2])
 if embeddings.shape[0] > 1:
-    pca = PCA(n_components=min(2, embeddings.shape[0]))
+    n_components = min(2, embeddings.shape[0])
+    pca = PCA(n_components=n_components)
     embeddings_pca = pca.fit_transform(embeddings)
 
     # Plot dos embeddings com PCA
@@ -116,6 +117,9 @@ if embeddings.shape[0] > 1:
     plt.ylabel('PCA 2')
     plt.title('Visualização dos Embeddings com PCA')
     plt.show()
+else:
+    print("PCA não pode ser aplicado pois há apenas uma amostra de embeddings.")
+
 
 # Calcular a curva ROC
 fpr, tpr, _ = roc_curve(test_data[2], model.predict([test_img1, test_img2]))
