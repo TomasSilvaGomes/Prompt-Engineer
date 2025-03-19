@@ -18,9 +18,9 @@ negativos_necessarios = comparacoes_total // 2
 
 # Distribuição de splits
 split_distrib = {
-    0: int(comparacoes_total * 0.3),  # treino
-    1: int(comparacoes_total * 0.2),  # validação
-    2: int(comparacoes_total * 0.5),  # teste
+    0: int(comparacoes_total * 0.7),  # treino
+    1: int(comparacoes_total * 0.15),  # validação
+    2: int(comparacoes_total * 0.15),  # teste
 }
 
 # Contadores
@@ -47,23 +47,24 @@ def get_split(img1, img2):
 comparacoes_final = []
 
 while len(comparacoes_final) < comparacoes_total:
-    if random.random() < 0.5:
-        img1, img2 = random.sample(ficheiros_tv, 2)  # S1
+    if positivos < positivos_necessarios and negativos < negativos_necessarios:
+        tipo = random.choice([0, 1])  # Escolher aleatoriamente entre positivo e negativo
+    elif positivos < positivos_necessarios:
+        tipo = 1  # Gerar mais positivos
     else:
-        img1 = random.choice(ficheiros_teste)  # S2
-        img2 = random.choice(ficheiros_teste)  # S2
+        tipo = 0  # Gerar mais negativos
 
-    pessoa1 = get_id_pessoa(img1)
-    pessoa2 = get_id_pessoa(img2)
-    if not pessoa1 or not pessoa2:
-        continue
+    if tipo == 1:
+        img1, img2 = random.sample(ficheiros_tv, 2) if random.random() < 0.5 else random.sample(ficheiros_teste, 2)
+        while get_id_pessoa(img1) != get_id_pessoa(img2):
+            img1, img2 = random.sample(ficheiros_tv, 2) if random.random() < 0.5 else random.sample(ficheiros_teste, 2)
+    else:
+        img1 = random.choice(ficheiros_tv) if random.random() < 0.5 else random.choice(ficheiros_teste)
+        img2 = random.choice(ficheiros_tv) if random.random() < 0.5 else random.choice(ficheiros_teste)
+        while get_id_pessoa(img1) == get_id_pessoa(img2):
+            img2 = random.choice(ficheiros_tv) if random.random() < 0.5 else random.choice(ficheiros_teste)
 
-    label = 1 if pessoa1 == pessoa2 else 0
-    if label == 1 and positivos >= positivos_necessarios:
-        continue
-    if label == 0 and negativos >= negativos_necessarios:
-        continue
-
+    label = tipo
     split = get_split(img1, img2)
     if split is None or split_counters[split] >= split_distrib[split]:
         continue
@@ -79,11 +80,17 @@ while len(comparacoes_final) < comparacoes_total:
 df = pd.DataFrame(comparacoes_final, columns=['img1', 'img2', 'identicas', 'fase'])
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
+# Garantir que o número final de comparações seja exatamente 10.000
+while len(df) < comparacoes_total:
+    falta = comparacoes_total - len(df)
+    amostras = df.sample(n=falta, replace=True)
+    df = pd.concat([df, amostras], ignore_index=True)
+
 # Gravação do CSV misturado
 csv_path = "comparacoes_10000_shuffled.csv"
 df.to_csv(csv_path, index=False)
 
 # Verificação final
 print("✅ CSV criado e misturado com sucesso!")
-print(f"Total comparações: {len(comparacoes_final)}")
-print(f"Positivos: {positivos}, Negativos: {negativos}")
+print(f"Total comparações: {len(df)}")
+print(f"Positivos: {df['identicas'].sum()}, Negativos: {len(df) - df['identicas'].sum()}")
