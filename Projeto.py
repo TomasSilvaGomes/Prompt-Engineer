@@ -2,6 +2,7 @@ import os
 import re
 import csv
 import random
+import pandas as pd
 
 # Diretório com as imagens
 diretoria = "both_eyes"
@@ -34,22 +35,18 @@ def get_id_pessoa(ficheiro):
 
 # Função para atribuir split com base no tipo da imagem (S1 ou S2)
 def get_split(img1, img2):
-    # Verificar se as imagens são do tipo S1 ou S2
     if 'S2' in img1 or 'S2' in img2:
-        # Ambas devem ser S2 para serem comparadas
         if 'S2' in img1 and 'S2' in img2:
             return 2  # Teste
         else:
             return None  # Não pode comparar S1 com S2
     else:
-        # Ambas devem ser S1 para serem comparadas
         return random.choice([0, 1])  # Treino ou Validação, aleatoriamente
 
 # Geração das comparações
 comparacoes_final = []
 
 while len(comparacoes_final) < comparacoes_total:
-    # Amostra aleatória entre as imagens de S1 ou S2
     if random.random() < 0.5:
         img1, img2 = random.sample(ficheiros_tv, 2)  # S1
     else:
@@ -78,14 +75,15 @@ while len(comparacoes_final) < comparacoes_total:
     else:
         negativos += 1
 
-# Gravação do CSV
-with open("comparacoes_10000.csv", "w", newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow(['img1', 'img2', 'identicas', 'fase'])
-    writer.writerows(comparacoes_final)
+# Criar DataFrame e misturar aleatoriamente as instâncias
+df = pd.DataFrame(comparacoes_final, columns=['img1', 'img2', 'identicas', 'fase'])
+df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+
+# Gravação do CSV misturado
+csv_path = "comparacoes_10000_shuffled.csv"
+df.to_csv(csv_path, index=False)
 
 # Verificação final
-print("✅ CSV criado com sucesso!")
+print("✅ CSV criado e misturado com sucesso!")
 print(f"Total comparações: {len(comparacoes_final)}")
 print(f"Positivos: {positivos}, Negativos: {negativos}")
-

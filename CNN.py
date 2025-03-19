@@ -2,7 +2,7 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from keras.applications import ResNet50
+from keras.applications import MobileNetV2
 from sklearn.metrics import roc_curve, auc, precision_score, recall_score, f1_score
 from tensorflow.keras import layers, models, backend as K
 from tensorflow.keras.preprocessing import image
@@ -12,7 +12,7 @@ from tensorflow.keras.optimizers import Adam
 img_dir = "both_eyes"
 
 # Função para carregar e processar imagens
-def load_and_preprocess_image(img_path, target_size=(128, 128)):
+def load_and_preprocess_image(img_path, target_size=(224, 224)):
     img = image.load_img(img_path, target_size=target_size)
     img_array = image.img_to_array(img) / 255.0  # Normalização
     return img_array
@@ -45,14 +45,15 @@ def contrastive_loss(y_true, y_pred, margin=1.0):
     return K.mean(y_true * square_pred + (1 - y_true) * margin_square)
 
 # Criar a rede siamesa com ResNet50 como backbone
-def create_siamese_network(input_shape=(128, 128, 3)):
-    base_model = ResNet50(weights='imagenet', include_top=False, input_shape=input_shape)
+def create_siamese_network(input_shape=(224, 224, 3)):
+    base_model = MobileNetV2 (weights='imagenet', include_top=False, input_shape=input_shape)
 
     # Criar modelo base
     inputs = layers.Input(shape=input_shape)
     x = base_model(inputs, training=True)
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(128, activation='relu')(x)
+    x = layers.Dense(224, activation='relu')(x)
+    x = layers.Dropout(0.5)(x)
     model = models.Model(inputs, x)
 
     # Criar entradas para a rede siamesa
@@ -68,12 +69,12 @@ def create_siamese_network(input_shape=(128, 128, 3)):
     output = layers.Dense(1, activation='sigmoid')(abs_distance)
 
     siamese_model = models.Model(inputs=[inputA, inputB], outputs=output)
-    siamese_model.compile(optimizer=Adam(learning_rate=0.0001), loss=contrastive_loss)
+    siamese_model.compile(optimizer=Adam(learning_rate=0.00001), loss=contrastive_loss, metrics=['accuracy'])
 
     return siamese_model
 
 # Carregar os dados
-df_csv = 'comparacoes_10000.csv'
+df_csv = 'comparacoes_10000_shuffled.csv'
 img1_paths, img2_paths, labels, fases = load_data_from_csv(df_csv)
 train_data, val_data, test_data = split_data(img1_paths, img2_paths, labels, fases)
 
@@ -90,7 +91,7 @@ model = create_siamese_network()
 history = model.fit(
     [train_img1, train_img2], train_data[2],
     validation_data=([test_img1, test_img2], test_data[2]),
-    batch_size=8, epochs=10, verbose=1
+    batch_size=32, epochs=10, verbose=1
 )
 
 # Calcular métricas no conjunto de teste
