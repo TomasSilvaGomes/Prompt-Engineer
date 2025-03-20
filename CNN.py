@@ -2,17 +2,18 @@ import os
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from keras.applications import MobileNetV2
+from keras.src.applications.resnet import ResNet50
 from sklearn.metrics import roc_curve, auc, precision_score, recall_score, f1_score
 from tensorflow.keras import layers, models, backend as K
 from tensorflow.keras.preprocessing import image
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.callbacks import ReduceLROnPlateau
 
 # Definir diretório das imagens
 img_dir = "both_eyes"
 
 # Função para carregar e processar imagens
-def load_and_preprocess_image(img_path, target_size=(224, 224)):
+def load_and_preprocess_image(img_path, target_size=(128, 128)):
     img = image.load_img(img_path, target_size=target_size)
     img_array = image.img_to_array(img) / 255.0  # Normalização
     return img_array
@@ -38,40 +39,64 @@ def split_data(img1_paths, img2_paths, labels, fases):
 
     return train_data, val_data, test_data
 
-# Função de perda contrastiva
-def contrastive_loss(y_true, y_pred, margin=1.0):
-    square_pred = K.square(y_pred)
-    margin_square = K.square(K.maximum(margin - y_pred, 0))
-    return K.mean(y_true * square_pred + (1 - y_true) * margin_square)
 
-# Criar a rede siamesa com ResNet50 como backbone
-def create_siamese_network(input_shape=(224, 224, 3)):
-    base_model = MobileNetV2 (weights='imagenet', include_top=False, input_shape=input_shape)
+def euclidean_distance(vectors):
+    (featA, featB) = vectors
+    sum_square = K.sum(K.square(featA - featB), axis=1, keepdims=True)
+    distance = K.sqrt(K.maximum(sum_square, K.epsilon()))  # Removido K.exp(-distance)
+    return distance
 
-    # Criar modelo base
+def absolute_difference(vectors):
+    (featA, featB) = vectors
+    return K.abs(featA - featB)  # Diferenca absoluta entre embeddings
+
+
+# Criar a CNN para extração de embeddings
+def create_embedding_model(input_shape=(128, 128, 3)):
+    base_model = ResNet50(weights='imagenet', include_top=False, input_shape=input_shape)
     inputs = layers.Input(shape=input_shape)
     x = base_model(inputs, training=True)
+    for layer in base_model.layers[:100]:
+        layer.trainable = False
     x = layers.GlobalAveragePooling2D()(x)
-    x = layers.Dense(224, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.7)(x)
+    x = layers.Dense(256, activation='relu')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.Dropout(0.7)(x)
+    x = layers.Lambda(lambda v: K.l2_normalize(v, axis=1))(x)
     model = models.Model(inputs, x)
+    return model
 
-    # Criar entradas para a rede siamesa
+# Criar o modelo de similaridade
+# Alterar a função para calcular a distância Euclidiana
+
+
+# Criar o modelo de similaridade com BCE
+def create_similarity_network(input_shape=(128, 128, 3)):
+    embedding_model = create_embedding_model(input_shape)
+
     inputA = layers.Input(shape=input_shape)
     inputB = layers.Input(shape=input_shape)
 
-    encodedA = model(inputA)
-    encodedB = model(inputB)
+    # Obter embeddings normalizados
+    embeddingA = embedding_model(inputA)
+    embeddingB = embedding_model(inputB)
 
-    # Distância entre embeddings
-    subtracted = layers.Subtract()([encodedA, encodedB])
-    abs_distance = layers.Activation('relu')(subtracted)
-    output = layers.Dense(1, activation='sigmoid')(abs_distance)
+    # Calcular a distancia absoluta
+    diff = layers.Lambda(absolute_difference)([embeddingA, embeddingB])
 
-    siamese_model = models.Model(inputs=[inputA, inputB], outputs=output)
-    siamese_model.compile(optimizer=Adam(learning_rate=0.00001), loss=contrastive_loss, metrics=['accuracy'])
+    output = layers.Dense(1, activation='sigmoid')(diff)
 
-    return siamese_model
+    # Criar modelo
+    similarity_model = models.Model(inputs=[inputA, inputB], outputs=output)
+
+    # Compilar usando BCE
+    similarity_model.compile(optimizer=SGD(learning_rate=0.001,momentum=0.9), loss='binary_crossentropy', metrics=['accuracy'])
+
+    return similarity_model
+
 
 # Carregar os dados
 df_csv = 'comparacoes_10000_shuffled.csv'
@@ -84,33 +109,32 @@ train_img2 = np.array([load_and_preprocess_image(p) for p in train_data[1]])
 test_img1 = np.array([load_and_preprocess_image(p) for p in test_data[0]])
 test_img2 = np.array([load_and_preprocess_image(p) for p in test_data[1]])
 
-# Criar o modelo
-model = create_siamese_network()
+# Criar o modelo de similaridade
+model = create_similarity_network()
+model.summary()
+
+lr_scheduler = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=5, min_lr=1e-6)
 
 # Treinar o modelo
 history = model.fit(
     [train_img1, train_img2], train_data[2],
     validation_data=([test_img1, test_img2], test_data[2]),
-    batch_size=32, epochs=10, verbose=1
+    batch_size=16, epochs=20, verbose=1
 )
 
-# Calcular métricas no conjunto de teste
+# Avaliar no conjunto de teste
 y_pred = model.predict([test_img1, test_img2]).flatten()
-y_pred_binary = (y_pred >= 0.5).astype(int)  # Converter para 0 ou 1
-
+y_pred_binary = (y_pred >= 0.6).astype(int)
 precision = precision_score(test_data[2], y_pred_binary)
 recall = recall_score(test_data[2], y_pred_binary)
 f1 = f1_score(test_data[2], y_pred_binary)
-
 print(f'Precisão: {precision:.2f}')
 print(f'Recall: {recall:.2f}')
 print(f'F1-Score: {f1:.2f}')
 
-# Calcular a curva ROC
+# Curva ROC
 fpr, tpr, _ = roc_curve(test_data[2], y_pred)
 roc_auc = auc(fpr, tpr)
-
-# Plot da curva ROC
 plt.figure(figsize=(8, 6))
 plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC Curve (Área = {roc_auc:.2f})')
 plt.plot([0, 1], [0, 1], color='gray', linestyle='--')

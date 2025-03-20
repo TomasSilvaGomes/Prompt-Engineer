@@ -1,7 +1,7 @@
 import os
-import re
-import csv
 import random
+import re
+
 import pandas as pd
 
 # Diretório com as imagens
