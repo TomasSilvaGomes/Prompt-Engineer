@@ -118,3 +118,40 @@ def evaluate_threshold(threshold):
 
 thresholds = 0.22
 evaluate_threshold(thresholds)
+
+# Função para extrair embeddings
+def extract_embeddings(model, X1, X2):
+    embeddings_1 = model.predict(X1)
+    embeddings_2 = model.predict(X2)
+    return np.concatenate([embeddings_1, embeddings_2], axis=0)
+
+# Extrair as representações das características
+siamese_model_embeddings = keras.Model(inputs=siamese_model.input, outputs=siamese_model.layers[-3].output)
+
+embeddings = extract_embeddings(siamese_model_embeddings, X1_test, X2_test)
+
+# Aplicar PCA para redução de dimensionalidade
+pca = PCA(n_components=2)
+reduced_embeddings = pca.fit_transform(embeddings)
+
+# Visualizar a separação usando PCA
+plt.figure(figsize=(10, 8))
+plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=np.argmax(y_test, axis=1), cmap='coolwarm')
+plt.colorbar(label='Classe')
+plt.title('Feature Representation (PCA)')
+plt.xlabel('Component 1')
+plt.ylabel('Component 2')
+plt.show()
+
+# Aplicar t-SNE para redução de dimensionalidade
+tsne = TSNE(n_components=2, perplexity=30, n_iter=300)
+tsne_embeddings = tsne.fit_transform(embeddings)
+
+# Visualizar a separação usando t-SNE
+plt.figure(figsize=(10, 8))
+plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], c=np.argmax(y_test, axis=1), cmap='coolwarm')
+plt.colorbar(label='Classe')
+plt.title('Feature Representation (t-SNE)')
+plt.xlabel('t-SNE Component 1')
+plt.ylabel('t-SNE Component 2')
+plt.show()

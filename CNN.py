@@ -14,7 +14,7 @@ from tensorflow.keras.utils import to_categorical
 img_dir = "both_eyes"
 
 # Função para carregar e processar imagens
-def load_and_preprocess_image(img_path, target_size=(64, 64)):
+def load_and_preprocess_image(img_path, target_size=(128, 128)):
     img = image.load_img(img_path, target_size=target_size)
     img_array = image.img_to_array(img) / 255.0  # Normalização
     return img_array
@@ -24,7 +24,7 @@ def load_data_from_csv(csv_file):
     df = pd.read_csv(csv_file)
     img1_paths = [os.path.join(img_dir, img) for img in df['img1'].values]
     img2_paths = [os.path.join(img_dir, img) for img in df['img2'].values]
-    labels = to_categorical(df['identicas'].values, num_classes=2)  # One-hot encoding
+    labels = df['identicas'].values
     fases = df['fase'].astype(int).values  # 0 = treino, 1 = validação, 2 = teste
     return np.array(img1_paths), np.array(img2_paths), np.array(labels), np.array(fases)
 
@@ -40,12 +40,15 @@ def split_data(img1_paths, img2_paths, labels, fases):
 
     return train_data, val_data, test_data
 
-def absolute_difference(vectors):
+
+def euclidean_distance(vectors):
     (featA, featB) = vectors
-    return K.abs(featA - featB)  # Diferença absoluta entre embeddings
+    sum_square = K.sum(K.square(featA - featB), axis=1, keepdims=True)
+    distance = K.sqrt(K.maximum(sum_square, K.epsilon()))  # Removido K.exp(-distance)
+    return distance
 
 # Criar a CNN para extração de embeddings
-def create_embedding_model(input_shape=(64, 64, 3)):
+def create_embedding_model(input_shape=(128, 128, 3)):
     base_model = ResNet50(weights='imagenet', include_top=False, input_shape=input_shape)
     inputs = layers.Input(shape=input_shape)
     x = base_model(inputs, training=True)
@@ -62,7 +65,7 @@ def create_embedding_model(input_shape=(64, 64, 3)):
     return model
 
 # Criar o modelo de similaridade com softmax
-def create_similarity_network(input_shape=(64, 64, 3)):
+def create_similarity_network(input_shape=(128, 128, 3)):
     embedding_model = create_embedding_model(input_shape)
 
     inputA = layers.Input(shape=input_shape)
@@ -71,11 +74,11 @@ def create_similarity_network(input_shape=(64, 64, 3)):
     embeddingA = embedding_model(inputA)
     embeddingB = embedding_model(inputB)
 
-    diff = layers.Lambda(absolute_difference)([embeddingA, embeddingB])
-    output = layers.Dense(2, activation='softmax')(diff)  # Softmax com duas saídas
+    diff = layers.Lambda(euclidean_distance)([embeddingA, embeddingB])
+    output = layers.Dense(1, activation='sigmoid')(diff)
 
     similarity_model = models.Model(inputs=[inputA, inputB], outputs=output)
-    similarity_model.compile(optimizer=Adam(learning_rate=0.00001), loss='categorical_crossentropy', metrics=['accuracy'])
+    similarity_model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
 
     return similarity_model
 
