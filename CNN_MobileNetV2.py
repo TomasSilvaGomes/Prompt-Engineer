@@ -101,7 +101,7 @@ early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_wei
 history = model.fit(
     [train_img1, train_img2], train_data[2],
     validation_data=([val_img1, val_img2], val_data[2]),
-    batch_size=16, epochs=1000, callbacks=[early_stopping]
+    batch_size=8, epochs=20, callbacks=[early_stopping]
 )
 
 # Avaliação
@@ -120,6 +120,25 @@ f1 = f1_score(test_data[2], y_pred_binary)
 print(f'Precisão: {precision:.2f}')
 print(f'Recall: {recall:.2f}')
 print(f'F1-Score: {f1:.2f}')
+
+
+def evaluate_thresholds(y_true, y_pred, thresholds):
+    for threshold in thresholds:
+        # Convertendo as previsões para 0 ou 1 com base no threshold
+        y_pred_binary = (y_pred >= threshold).astype(int)
+
+        # Calculando o False Acceptance Rate (FAR)
+        FAR = np.mean((y_pred_binary == 1) & (y_true == 0))
+
+        # Calculando o False Rejection Rate (FRR)
+        FRR = np.mean((y_pred_binary == 0) & (y_true == 1))
+
+        print(f'Threshold: {threshold:.2f} | Falsos positivos (FAR): {FAR:.4f} | Falsos negativos (FRR): {FRR:.4f}')
+
+
+# Definindo uma lista de thresholds para testar
+thresholds = np.arange(0.0, 1.1, 0.1)
+evaluate_thresholds(test_data[2],y_pred, thresholds)
 
 # Curva ROC
 fpr, tpr, _ = roc_curve(test_data[2], y_pred)

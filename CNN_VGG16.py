@@ -10,13 +10,14 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from tensorflow.keras.applications import VGG16
 from tensorflow.keras.utils import to_categorical
+from sklearn.manifold import TSNE
 
 # Diretório onde as imagens estão armazenadas
 IMAGE_DIR = "both_eyes"
 CSV_PATH = "comparacoes_10000_shuffled.csv"
-IMG_SIZE = (128, 128)
-BATCH_SIZE = 8
-EPOCHS = 30
+IMG_SIZE = (64, 64)
+BATCH_SIZE = 16
+EPOCHS = 1000
 
 # Carregar dataset
 df = pd.read_csv(CSV_PATH)
@@ -40,7 +41,6 @@ for _, row in df.iterrows():
     y.append(label)
 
 X1, X2, y = np.array(X1), np.array(X2), np.array(y)
-y = to_categorical(y, num_classes=2)  # Converter rótulos para one-hot encoding
 
 # Separar conjuntos de treino, validação e teste
 train_idx = df[df['fase'] == 0].index
@@ -74,7 +74,7 @@ def build_siamese_network():
 
     # Distância entre embeddings
     distance = layers.Lambda(lambda tensors: tf.abs(tensors[0] - tensors[1]))([feature_1, feature_2])
-    output = layers.Dense(2, activation='softmax')(distance)  # Softmax com duas saídas
+    output = layers.Dense(1, activation='sigmoid')(distance)
 
     model = keras.Model(inputs=[input_1, input_2], outputs=output)
     return model
@@ -82,7 +82,8 @@ def build_siamese_network():
 
 # Criar e compilar modelo
 siamese_model = build_siamese_network()
-siamese_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+# usar learning rate de 0.0001
+siamese_model.compile(loss='binary_crossentropy', optimizer=keras.optimizers.Adam(learning_rate=0.0001), metrics=['accuracy'])
 
 # Treinar modelo
 history = siamese_model.fit(
@@ -91,6 +92,11 @@ history = siamese_model.fit(
     epochs=EPOCHS,
     batch_size=BATCH_SIZE
 )
+
+loss, accuracy = siamese_model.evaluate([X1_test, X2_test], y_test)
+print(f"Acurácia no conjunto de teste: {accuracy * 100:.2f}%")
+print(f"Loss no conjunto de teste: {loss:.4f}")
+
 
 # Avaliação no conjunto de teste
 preds = siamese_model.predict([X1_test, X2_test])
@@ -130,28 +136,17 @@ siamese_model_embeddings = keras.Model(inputs=siamese_model.input, outputs=siame
 
 embeddings = extract_embeddings(siamese_model_embeddings, X1_test, X2_test)
 
-# Aplicar PCA para redução de dimensionalidade
-pca = PCA(n_components=2)
-reduced_embeddings = pca.fit_transform(embeddings)
 
-# Visualizar a separação usando PCA
+#usar t-SNE para visualizar as representações a partir das representações latentes para saber os identicos e os nao identicos
+
+
+tsne = TSNE(n_components=2, random_state=42)
+embeddings_tsne = tsne.fit_transform(embeddings)
+
 plt.figure(figsize=(10, 8))
-plt.scatter(reduced_embeddings[:, 0], reduced_embeddings[:, 1], c=np.argmax(y_test, axis=1), cmap='coolwarm')
-plt.colorbar(label='Classe')
-plt.title('Feature Representation (PCA)')
-plt.xlabel('Component 1')
-plt.ylabel('Component 2')
-plt.show()
 
-# Aplicar t-SNE para redução de dimensionalidade
-tsne = TSNE(n_components=2, perplexity=30, n_iter=300)
-tsne_embeddings = tsne.fit_transform(embeddings)
-
-# Visualizar a separação usando t-SNE
-plt.figure(figsize=(10, 8))
-plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], c=np.argmax(y_test, axis=1), cmap='coolwarm')
-plt.colorbar(label='Classe')
-plt.title('Feature Representation (t-SNE)')
-plt.xlabel('t-SNE Component 1')
-plt.ylabel('t-SNE Component 2')
+plt.scatter(embeddings_tsne[y_test[:, 1] == 0, 0], embeddings_tsne[y_test[:, 1] == 0, 1], color='red', label='Não-identicos')
+plt.scatter(embeddings_tsne[y_test[:, 1] == 1, 0], embeddings_tsne[y_test[:, 1] == 1, 1], color='blue', label='Identicos')
+plt.title('Representação de características (t-SNE)')
+plt.legend()
 plt.show()
