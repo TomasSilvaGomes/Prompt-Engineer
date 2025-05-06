@@ -14,6 +14,9 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.applications import ResNet50
 from tensorflow.keras.models import load_model
+from transformers import AutoProcessor, AutoModelForVision2Seq
+from PIL import Image
+import torch
 
 
 # Redutor de dimensionalidade
@@ -138,3 +141,29 @@ image_names_and_predictions = get_image_names_and_predictions(Y_test[0][:100], Y
 print(f"Imagens e respetivas previsões: {image_names_and_predictions}")
 
 df = pd.DataFrame(image_names_and_predictions, columns=['img1', 'img2', 'prediction'])
+
+# Detect macOS MPS backend (Apple Silicon)
+device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+
+# Load the processor and model
+model_id = "nvidia/DAM-3B"
+processor = AutoProcessor.from_pretrained(model_id)
+model = AutoModelForVision2Seq.from_pretrained(model_id).to(device)
+
+# Load image
+image_path = "your_image.jpg"  # Replace with your image path
+image = Image.open(image_path).convert("RGB")
+
+# Prompt
+text_prompt = "Describe this image."
+
+# Preprocess inputs
+inputs = processor(images=image, text=text_prompt, return_tensors="pt").to(device)
+
+# Run model (may be slow on CPU/MPS)
+with torch.no_grad():
+    outputs = model.generate(**inputs, max_new_tokens=50)
+
+# Decode
+decoded = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+print("Model output:", decoded)
