@@ -102,9 +102,6 @@ def concatenate_filtered_images(img1, img2, method='sobel'):
 def create_base_network(input_shape):
     base_model = VGG16(weights=None , include_top=False, input_shape=input_shape)
     x = layers.GlobalAveragePooling2D()(base_model.output)
-    x = layers.Dense(512, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Dropout(0.5)(x)
     x = layers.Dense(256, activation='relu')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Dropout(0.5)(x)
@@ -162,15 +159,15 @@ if TRAIN_MODEL:
     history = model.fit(X_train_concat, X_train[2],
                         validation_data=(X_val_concat, X_val[2]),
                         batch_size=16, epochs=100, callbacks=[early_stopping])
-    model.save("modelo_treinado2.h5")
+    model.save("modelo_treinado4.h5")
 else:
-    model = load_model("modelo_treinado2.h5")
+    model = load_model("modelo_treinado4.h5")
     model.summary()
 
 # ----------------------------------------------- Avaliação do modelo ----------------------------------------------------- #
 # Avaliação do modelo
 y_pred = model.predict(Y_test_concat)
-y_pred_bin = (y_pred > 0.10).astype(int)
+y_pred_bin = (y_pred > 0.40).astype(int)
 precision = precision_score(Y_test[2], y_pred_bin)
 recall = recall_score(Y_test[2], y_pred_bin)
 f1 = f1_score(Y_test[2], y_pred_bin)
@@ -180,8 +177,8 @@ print(f'Recall conjunto teste: {recall:.2f}')
 print(f'F1 Score no conjunto teste: {f1:.2f}')
 
 # Definindo uma lista de thresholds para testar
-thresholds = np.arange(0.0, 1.1, 0.1)
-evaluate_thresholds(Y_test[2],y_pred, thresholds)
+#thresholds = np.arange(0.0, 1.1, 0.1)
+#evaluate_thresholds(Y_test[2],y_pred, thresholds)
 
 
 # ----------------------------------------------- Grad-CAM Visualização ----------------------------------------------------- #
@@ -216,7 +213,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
     return heatmap.numpy()
 
-for i in range(5):
+for i in range(2):
     img_input = Y_test_concat[i:i+1]
 
     # Geração do heatmap
