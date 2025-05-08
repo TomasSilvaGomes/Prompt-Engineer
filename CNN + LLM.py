@@ -1,23 +1,22 @@
+import base64
 import os
+from io import BytesIO
+import cv2
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import cv2
-from tensorflow.keras.applications import VGG16
-import umap.umap_ as umap
 import tensorflow as tf
-from tensorflow.keras.metrics import Precision, Recall
-from sklearn.metrics import roc_curve, auc, precision_score, recall_score, f1_score
-from tensorflow.keras import layers, models, backend as K
-from tensorflow.keras.preprocessing import image
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.applications import ResNet50
-from tensorflow.keras.models import load_model
-from transformers import AutoProcessor, AutoModelForVision2Seq
-from PIL import Image
 import torch
-
+import umap.umap_ as umap
+from PIL import Image
+from tensorflow.keras import layers, models, backend as K
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.applications import VGG16
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.metrics import Precision, Recall
+from tensorflow.keras.models import load_model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing import image
+from transformers import CLIPProcessor, CLIPModel, AutoTokenizer, AutoModelForCausalLM
 
 # Redutor de dimensionalidade
 reducer = umap.UMAP()
@@ -142,28 +141,93 @@ print(f"Imagens e respetivas previsões: {image_names_and_predictions}")
 
 df = pd.DataFrame(image_names_and_predictions, columns=['img1', 'img2', 'prediction'])
 
-# Detect macOS MPS backend (Apple Silicon)
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
-# Load the processor and model
-model_id = "nvidia/DAM-3B"
-processor = AutoProcessor.from_pretrained(model_id)
-model = AutoModelForVision2Seq.from_pretrained(model_id).to(device)
+# Função para carregar e pré-processar imagens
+def preprocess_image(img_path1, img_path2, target_size=(300, 104)):
+    img1 = cv2.imread(img_path1, cv2.IMREAD_GRAYSCALE)
+    img2 = cv2.imread(img_path2, cv2.IMREAD_GRAYSCALE)
+    img1 = cv2.resize(img1, target_size)
+    img2 = cv2.resize(img2, target_size)
 
-# Load image
-image_path = "your_image.jpg"  # Replace with your image path
-image = Image.open(image_path).convert("RGB")
+    # Concatenar as duas imagens
+    concat_image = np.concatenate((img1, img2), axis=-1)
+    concat_image = np.clip(concat_image, 0, 255)
+    concat_image = concat_image / 255.0  # Normalizar para [0, 1]
+    concat_image = np.expand_dims(concat_image, axis=-1)  # Formato (altura, largura, 2)
 
-# Prompt
-text_prompt = "Describe this image."
+    return concat_image
 
-# Preprocess inputs
-inputs = processor(images=image, text=text_prompt, return_tensors="pt").to(device)
+# Função para converter imagem para base64
+def image_to_base64(image):
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-# Run model (may be slow on CPU/MPS)
-with torch.no_grad():
-    outputs = model.generate(**inputs, max_new_tokens=50)
+def justify_with_clip_llm(pil_image, prompt):
+    # Extrair embedding da imagem com CLIP
+    inputs = clip_processor(images=pil_image, return_tensors="pt").to(device)
+    with torch.no_grad():
+        image_features = clip_model.get_image_features(**inputs)
 
-# Decode
-decoded = processor.batch_decode(outputs, skip_special_tokens=True)[0]
-print("Model output:", decoded)
+    # Gerar prompt textual final
+    final_prompt = (
+        f"{prompt}\n\nDescrição da imagem codificada: {image_features[0].tolist()[:10]}...\n"
+        "Explica com base visual concreta se são ou não da mesma pessoa."
+    )
+
+    # Codificar e gerar resposta com LLM
+    input_ids = llm_tokenizer.encode(final_prompt, return_tensors="pt").to(device)
+    output = llm_model.generate(input_ids, max_new_tokens=100, do_sample=True, top_k=50)
+
+    decoded = llm_tokenizer.decode(output[0], skip_special_tokens=True)
+    return decoded.split(final_prompt)[-1].strip()
+
+
+
+
+# ----------------------------------------------- Carregamento e pré-processamento da imagem para BLIP2 ------------------------------------- #
+# Aqui, usamos a primeira linha do dataframe df
+first_row = df.iloc[0]
+img1_path = os.path.join(img_dir, first_row['img1'])
+img2_path = os.path.join(img_dir, first_row['img2'])
+label = int(first_row['prediction'])  # usa prediction do modelo binário (0 ou 1)
+
+# Pré-processar as imagens
+processed_image = preprocess_image(img1_path, img2_path)
+
+# Converter a imagem concatenada para formato adequado para o modelo (RGB)
+concat_image = (processed_image * 255).astype(np.uint8)
+
+# Se for uma imagem monocromática (1 canal), convertê-la para RGB (3 canais)
+if concat_image.ndim == 3 and concat_image.shape[-1] == 1:
+    concat_image = np.repeat(concat_image, 3, axis=-1)  # Replicar o canal para 3
+
+# Agora, crie o objeto PIL Image
+concat_pil = Image.fromarray(concat_image)
+concat_pil.show()
+
+
+# Criar o prompt com base na classificação
+prompt = (
+    "A imagem mostra duas regiões dos olhos extraídas de duas pessoas, Compara cuidadosamente a forma dos olhos, as sobrancelhas e o espaçamento entre eles. Justifica com detalhes visuais concretos, porque é que pertecem à mesma pessoa. "
+    if label == 1 else
+    "A imagem mostra duas regiões dos olhos extraídas de duas pessoas. Compara cuidadosamente a forma dos olhos, as sobrancelhas e o espaçamento entre eles. Justifica com detalhes visuais concretos, porque é que não pertecem à mesma pessoa. "
+)
+
+# Setup
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# CLIP: carregar modelo e processor
+clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
+clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+
+# LLM: modelo de linguagem (podes trocar por mistral ou outro se quiseres local)
+llm_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
+llm_model = AutoModelForCausalLM.from_pretrained(
+    "mistralai/Mistral-7B-Instruct-v0.1",
+    torch_dtype=torch.float16 if device == "cuda" else torch.float32
+).to(device)
+
+response = justify_with_clip_llm(concat_pil, prompt)
+print(response)
+
