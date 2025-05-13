@@ -1,5 +1,4 @@
 import base64
-import os
 from io import BytesIO
 import cv2
 import numpy as np
@@ -16,7 +15,9 @@ from tensorflow.keras.metrics import Precision, Recall
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
-from transformers import CLIPProcessor, CLIPModel, AutoTokenizer, AutoModelForCausalLM
+import os
+import requests
+import json
 
 # Redutor de dimensionalidade
 reducer = umap.UMAP()
@@ -25,7 +26,8 @@ reducer = umap.UMAP()
 
 img_dir = "both_eyes"
 csv_file = "comparacoes_10000_shuffled.csv"
-
+#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
+api = "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"
 
 
 # ---------------------------------------------- Funções de carregamento e pré-processamento ---------------------------------------------- #
@@ -163,24 +165,41 @@ def image_to_base64(image):
     image.save(buffered, format="JPEG")
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
-def justify_with_clip_llm(pil_image, prompt):
-    # Extrair embedding da imagem com CLIP
-    inputs = clip_processor(images=pil_image, return_tensors="pt").to(device)
-    with torch.no_grad():
-        image_features = clip_model.get_image_features(**inputs)
+def justify_with_internvl(pil_image, prompt, openrouter_api_key):
+    # Converter imagem PIL para base64
+    buffered = BytesIO()
+    pil_image.save(buffered, format="PNG")
+    img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    image_data_url = f"data:image/png;base64,{img_b64}"
 
-    # Gerar prompt textual final
-    final_prompt = (
-        f"{prompt}\n\nDescrição da imagem codificada: {image_features[0].tolist()[:10]}...\n"
-        "Explica com base visual concreta se são ou não da mesma pessoa."
-    )
+    headers = {
+        "Authorization": f"Bearer {openrouter_api_key}",
+        "Content-Type": "application/json",
+        # Estes são opcionais:
+        "X-Title": "CNN+LLM Justification Tool"         # opcional
+    }
 
-    # Codificar e gerar resposta com LLM
-    input_ids = llm_tokenizer.encode(final_prompt, return_tensors="pt").to(device)
-    output = llm_model.generate(input_ids, max_new_tokens=100, do_sample=True, top_k=50)
+    payload = {
+        "model": "opengvlab/internvl3-2b:free",  # modelo correto
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}}
+                ]
+            }
+        ],
+        "max_tokens": 150
+    }
 
-    decoded = llm_tokenizer.decode(output[0], skip_special_tokens=True)
-    return decoded.split(final_prompt)[-1].strip()
+    response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, data=json.dumps(payload))
+
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    else:
+        raise RuntimeError(f"Erro na API OpenRouter: {response.status_code}\n{response.text}")
+
 
 
 
@@ -206,28 +225,17 @@ if concat_image.ndim == 3 and concat_image.shape[-1] == 1:
 concat_pil = Image.fromarray(concat_image)
 concat_pil.show()
 
-
-# Criar o prompt com base na classificação
 prompt = (
-    "A imagem mostra duas regiões dos olhos extraídas de duas pessoas, Compara cuidadosamente a forma dos olhos, as sobrancelhas e o espaçamento entre eles. Justifica com detalhes visuais concretos, porque é que pertecem à mesma pessoa. "
+    "Porque é que as imagens pertencem à mesma pessoa?"
     if label == 1 else
-    "A imagem mostra duas regiões dos olhos extraídas de duas pessoas. Compara cuidadosamente a forma dos olhos, as sobrancelhas e o espaçamento entre eles. Justifica com detalhes visuais concretos, porque é que não pertecem à mesma pessoa. "
+    "Porque é que as imagens não pertencem à mesma pessoa?"
 )
+
 
 # Setup
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# CLIP: carregar modelo e processor
-clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
-clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
-# LLM: modelo de linguagem (podes trocar por mistral ou outro se quiseres local)
-llm_tokenizer = AutoTokenizer.from_pretrained("mistralai/Mistral-7B-Instruct-v0.1")
-llm_model = AutoModelForCausalLM.from_pretrained(
-    "mistralai/Mistral-7B-Instruct-v0.1",
-    torch_dtype=torch.float16 if device == "cuda" else torch.float32
-).to(device)
-
-response = justify_with_clip_llm(concat_pil, prompt)
-print(response)
+response = justify_with_internvl(concat_pil,prompt,api)
+print(f"Resposta pelo LLM: {response}")
 
