@@ -18,6 +18,18 @@ from tensorflow.keras.preprocessing import image
 import os
 import requests
 import json
+import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+from sentence_transformers import SentenceTransformer
+import os
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+import time
+
+
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 # Redutor de dimensionalidade
 reducer = umap.UMAP()
@@ -27,7 +39,7 @@ reducer = umap.UMAP()
 img_dir = "both_eyes"
 csv_file = "comparacoes_10000_shuffled.csv"
 #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
-api = "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"
+api = "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"
 
 
 # ---------------------------------------------- Funções de carregamento e pré-processamento ---------------------------------------------- #
@@ -117,7 +129,7 @@ Y_test_concat = np.array([concatenate_filtered_images(img1, img2, method='sobel'
 
 print(f"Shape das imagens{X_train_concat.shape}")
 
-# ----------------------------------------------- Criação e treino do modelo ----------------------------------------------------- #
+# -----------------------------------------------  Chamada do modelo ----------------------------------------------------- #
 model = load_model("modelo_treinado4.h5")
 model.summary()
 
@@ -206,7 +218,7 @@ def justify_with_internvl(pil_image, prompt, openrouter_api_key):
 
 # ----------------------------------------------- Carregamento e pré-processamento da imagem para BLIP2 ------------------------------------- #
 # Aqui, usamos a primeira linha do dataframe df
-first_row = df.iloc[0]
+first_row = df.iloc[1]
 img1_path = os.path.join(img_dir, first_row['img1'])
 img2_path = os.path.join(img_dir, first_row['img2'])
 label = int(first_row['prediction'])  # usa prediction do modelo binário (0 ou 1)
@@ -235,7 +247,49 @@ prompt = (
 # Setup
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# ------------------------------------------------- Justificação com InternVL ----------------------------------------------------- #
+# for cicle to generate 50 responses and storage in a list
+responses = []
+for i in range(15):
+    try:
+        response = justify_with_internvl(concat_pil, prompt, api)
+        responses.append(response)
+        print(f"[{i+1}/15] Justificação obtida.")
+        time.sleep(20)  # Espera 20 segundos antes da próxima chamada
+    except Exception as e:
+        print(f"Erro na iteração {i+1}: {e}")
+        break
 
-response = justify_with_internvl(concat_pil,prompt,api)
-print(f"Resposta pelo LLM: {response}")
+
+print(responses[0])
+
+
+# ----------------------------------------------- Text Encoder  ----------------------------------------------------- #
+# Codificador de texto
+text_encoder = SentenceTransformer('all-MiniLM-L6-v2')  # modelo leve e eficaz
+
+scaler = StandardScaler()
+response_embeddings = text_encoder.encode(responses)
+if not np.all(np.isfinite(response_embeddings)):
+    print("Erro: Existem NaNs ou Inf nos embeddings!")
+    response_embeddings = np.nan_to_num(response_embeddings)
+
+response_embeddings = scaler.fit_transform(response_embeddings)
+n_samples = len(responses)
+perplexity = min(10, n_samples - 1)  # garantir que perplexidade < n_samples
+
+# -------------------------------------------------- Tsne para redução de Visualização ----------------------------------------------------- #
+# t-sne with responses
+tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity)
+X_embedded = tsne.fit_transform(response_embeddings)
+plt.figure(figsize=(10, 8))
+for i, txt in enumerate(responses):
+    if len(txt) > 20:  # Limitar o comprimento do texto para evitar sobreposição
+        txt = txt[:20] + "..."
+    plt.text(X_embedded[i, 0] + 0.5, X_embedded[i, 1], txt, fontsize=9)
+plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c='blue', marker='o')
+plt.title("t-SNE Visualization of Justification Responses")
+plt.xlabel("t-SNE Component 1")
+plt.ylabel("t-SNE Component 2")
+plt.show()
 
