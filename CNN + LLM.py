@@ -1,7 +1,6 @@
 import base64
 from io import BytesIO
 import cv2
-import numpy as np
 import pandas as pd
 import tensorflow as tf
 import torch
@@ -15,7 +14,6 @@ from tensorflow.keras.metrics import Precision, Recall
 from tensorflow.keras.models import load_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing import image
-import os
 import requests
 import json
 import matplotlib.pyplot as plt
@@ -25,6 +23,10 @@ import os
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 import time
+from sklearn.cluster import KMeans
+import umap.umap_ as umap
+
+
 
 
 
@@ -39,7 +41,7 @@ reducer = umap.UMAP()
 img_dir = "both_eyes"
 csv_file = "comparacoes_10000_shuffled.csv"
 #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
-api = "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"
+api = "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"
 
 
 # ---------------------------------------------- Funções de carregamento e pré-processamento ---------------------------------------------- #
@@ -273,15 +275,18 @@ response_embeddings = text_encoder.encode(responses)
 if not np.all(np.isfinite(response_embeddings)):
     print("Erro: Existem NaNs ou Inf nos embeddings!")
     response_embeddings = np.nan_to_num(response_embeddings)
-
-response_embeddings = scaler.fit_transform(response_embeddings)
+print(response_embeddings)
+if np.allclose(response_embeddings, response_embeddings[0]):
+    print("Todos os embeddings são idênticos. A evitar normalização.")
+else:
+    response_embeddings = scaler.fit_transform(response_embeddings)
+print(response_embeddings)
 n_samples = len(responses)
-perplexity = min(10, n_samples - 1)  # garantir que perplexidade < n_samples
 
-# -------------------------------------------------- Tsne para redução de Visualização ----------------------------------------------------- #
-# t-sne with responses
-tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity)
-X_embedded = tsne.fit_transform(response_embeddings)
+# -------------------------------------------------- Umap para redução de Visualização ----------------------------------------------------- #
+reducer = umap.UMAP(n_components=2, random_state=42)
+X_embedded = reducer.fit_transform(response_embeddings)
+
 plt.figure(figsize=(10, 8))
 for i, txt in enumerate(responses):
     if len(txt) > 20:  # Limitar o comprimento do texto para evitar sobreposição
@@ -291,5 +296,46 @@ plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c='blue', marker='o')
 plt.title("t-SNE Visualization of Justification Responses")
 plt.xlabel("t-SNE Component 1")
 plt.ylabel("t-SNE Component 2")
+plt.grid()
 plt.show()
+
+
+# ------------------ KMeans + escolha da melhor resposta ------------------ #
+n_clusters = 2  # ou outro número, dependendo da variação das respostas
+kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto')
+cluster_ids = kmeans.fit_predict(X_embedded)
+
+# Identificar o maior cluster
+unique, counts = np.unique(cluster_ids, return_counts=True)
+maior_cluster_id = unique[np.argmax(counts)]
+pontos_maior_cluster = X_embedded[cluster_ids == maior_cluster_id]
+centroide = np.mean(pontos_maior_cluster, axis=0)
+
+# Encontrar índice da resposta mais próxima ao centróide
+dists = np.linalg.norm(pontos_maior_cluster - centroide, axis=1)
+idx_relativo = np.argmin(dists)
+idx_absoluto = np.where(cluster_ids == maior_cluster_id)[0][idx_relativo]
+
+# Melhor resposta
+melhor_resposta = responses[idx_absoluto]
+print("Melhor resposta com base no cluster dominante e centróide:")
+print(melhor_resposta)
+
+# ------------------ Visualização ------------------ #
+plt.figure(figsize=(10, 8))
+for i, txt in enumerate(responses):
+    display_txt = txt[:20] + "..." if len(txt) > 20 else txt
+    plt.text(X_embedded[i, 0] + 0.5, X_embedded[i, 1], display_txt, fontsize=9)
+
+plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c=cluster_ids, cmap='tab10', marker='o')
+plt.scatter(*centroide, color='black', marker='x', s=150, label='Centróide')
+plt.scatter(*X_embedded[idx_absoluto], color='red', edgecolors='black', s=150, label='Melhor resposta')
+
+plt.title("Justificações")
+plt.xlabel("Componente 1")
+plt.ylabel("Componente 2")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
 
