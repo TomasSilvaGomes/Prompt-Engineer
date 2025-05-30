@@ -40,8 +40,7 @@ reducer = umap.UMAP()
 
 img_dir = "both_eyes"
 csv_file = "comparacoes_10000_shuffled.csv"
-#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
-api = "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"
+api = "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"
 
 
 # ---------------------------------------------- Funções de carregamento e pré-processamento ---------------------------------------------- #
@@ -151,7 +150,7 @@ def get_image_names_and_predictions(img_path1, img_path2, predictions):
     return results
 
 
-image_names_and_predictions = get_image_names_and_predictions(Y_test[0][:100], Y_test[1][:100], y_pred_bin)
+image_names_and_predictions = get_image_names_and_predictions(Y_test[0][:10], Y_test[1][:10], y_pred_bin)
 
 print(f"Imagens e respetivas previsões: {image_names_and_predictions}")
 
@@ -204,7 +203,7 @@ def justify_with_internvl(pil_image, prompt, openrouter_api_key):
                 ]
             }
         ],
-        "max_tokens": 150
+        "max_tokens": 200
     }
 
     response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, data=json.dumps(payload))
@@ -220,7 +219,7 @@ def justify_with_internvl(pil_image, prompt, openrouter_api_key):
 
 # ----------------------------------------------- Carregamento e pré-processamento da imagem para BLIP2 ------------------------------------- #
 # Aqui, usamos a primeira linha do dataframe df
-first_row = df.iloc[1]
+first_row = df.iloc[0]
 img1_path = os.path.join(img_dir, first_row['img1'])
 img2_path = os.path.join(img_dir, first_row['img2'])
 label = int(first_row['prediction'])  # usa prediction do modelo binário (0 ou 1)
@@ -240,9 +239,17 @@ concat_pil = Image.fromarray(concat_image)
 concat_pil.show()
 
 prompt = (
-    "Porque é que as imagens pertencem à mesma pessoa?"
+    """As imagens são da mesma pessoa. Inicia a tua justificação apenas em tópicos, em português de Portugal,
+    baseando-te nas características e forma dos olhos, na forma das sobrancelhas, 
+    na presença ou ausência de óculos, e na forma como o cabelo pode emoldurar os olhos.
+    Imagina que tens de explicar de forma pequena e simples, 
+    por que razão as imagens são da mesma pessoa. """
     if label == 1 else
-    "Porque é que as imagens não pertencem à mesma pessoa?"
+    """As imagens não são da mesma pessoa. Inicia a tua justificação apenas em tópicos, em português de Portugal,
+    baseando-te nas características e forma dos olhos, na forma das sobrancelhas, 
+    na presença ou ausência de óculos, e na forma como o cabelo pode emoldurar os olhos.
+    Imagina que tens de explicar de forma pequena e simples, 
+    por que razão as imagens não são da mesma pessoa. """
 )
 
 
@@ -263,9 +270,6 @@ for i in range(15):
         break
 
 
-print(responses[0])
-
-
 # ----------------------------------------------- Text Encoder  ----------------------------------------------------- #
 # Codificador de texto
 text_encoder = SentenceTransformer('all-MiniLM-L6-v2')  # modelo leve e eficaz
@@ -275,13 +279,10 @@ response_embeddings = text_encoder.encode(responses)
 if not np.all(np.isfinite(response_embeddings)):
     print("Erro: Existem NaNs ou Inf nos embeddings!")
     response_embeddings = np.nan_to_num(response_embeddings)
-print(response_embeddings)
 if np.allclose(response_embeddings, response_embeddings[0]):
     print("Todos os embeddings são idênticos. A evitar normalização.")
 else:
     response_embeddings = scaler.fit_transform(response_embeddings)
-print(response_embeddings)
-n_samples = len(responses)
 
 # -------------------------------------------------- Umap para redução de Visualização ----------------------------------------------------- #
 reducer = umap.UMAP(n_components=2, random_state=42)
@@ -293,9 +294,9 @@ for i, txt in enumerate(responses):
         txt = txt[:20] + "..."
     plt.text(X_embedded[i, 0] + 0.5, X_embedded[i, 1], txt, fontsize=9)
 plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c='blue', marker='o')
-plt.title("t-SNE Visualization of Justification Responses")
-plt.xlabel("t-SNE Component 1")
-plt.ylabel("t-SNE Component 2")
+plt.title("Gráfico umap das Respostas")
+plt.xlabel("UMAP Component 1")
+plt.ylabel("UMAP Component 2")
 plt.grid()
 plt.show()
 
@@ -331,11 +332,11 @@ plt.scatter(X_embedded[:, 0], X_embedded[:, 1], c=cluster_ids, cmap='tab10', mar
 plt.scatter(*centroide, color='black', marker='x', s=150, label='Centróide')
 plt.scatter(*X_embedded[idx_absoluto], color='red', edgecolors='black', s=150, label='Melhor resposta')
 
-plt.title("Justificações")
+plt.title("Gráfico com Kmeans e Melhor Resposta")
 plt.xlabel("Componente 1")
 plt.ylabel("Componente 2")
 plt.legend()
 plt.tight_layout()
 plt.show()
-
+plt.grid()
 
